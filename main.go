@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"path"
 	"strconv"
 	"github.com/flosch/pongo2"
 	"github.com/gin-gonic/gin"
@@ -38,7 +37,7 @@ var debug = flag.Bool("d", false, "Debug template")
 
 var cfg = Config{}
 var bot *tgbotapi.BotAPI
-var tmpH *pongo2.Template
+var tmpH map[string]*pongo2.Template
 
 
 
@@ -76,13 +75,9 @@ func telegramBot(bot *tgbotapi.BotAPI) {
 	}
 }
 
-func loadTemplate(tmplPath string) *pongo2.Template {
+func loadTemplate(tmplPath string) (*pongo2.Template, error) {
 	// let's read template
-	tmpH :=  pongo2.Must(pongo2.FromFile(path.Base(tmplPath)))
-
-
-
-	return tmpH
+	return pongo2.FromFile(tmplPath)
 }
 
 func SplitString(s string, n int) []string {
@@ -134,8 +129,13 @@ func main() {
 		bot.Debug = true
 	}
 	if cfg.TemplatePath != "" {
-
-		tmpH = loadTemplate(cfg.TemplatePath)
+		
+		tmpH = make(map[string]*pongo2.Template)
+		log.Printf("Default template: %s", cfg.TemplatePath)
+		tmpH["default"],err = loadTemplate(cfg.TemplatePath)
+		if err != nil {
+			log.Fatalf("%s", err)
+		}
 
 		if cfg.TimeZone == "" {
 			log.Fatalf("You must define time_zone of your bot")
@@ -186,25 +186,38 @@ func GET_Handling(c *gin.Context) {
 	}
 }
 
-func AlertFormatTemplate(alerts map[string]interface{}) string {
+func AlertFormatTemplate(alerts map[string]interface{}, template string) string {
 	var bytesBuff bytes.Buffer
 	var err error
-
+		
+	if template == "" {
+		template = "default"
+	}
+	
 	writer := io.Writer(&bytesBuff)
 
-	if *debug {
-		log.Printf("Reloading Template\n")
-		// reload template bacause we in debug mode
-		tmpH = loadTemplate(cfg.TemplatePath)
+	_, ok := tmpH[template]
+	
+	if !ok || *debug {
+		log.Printf("Reloading Template %s\n", template)
+		if template == "default" {
+			tmpH[template],err = loadTemplate(cfg.TemplatePath)
+		} else {
+			tmpH[template],err = loadTemplate(template)
+		}
+		if err != nil {
+			log.Printf("Problem with load template: %s %s", template, err)
+			tmpH[template] = tmpH["default"]
+		} 
 	}
 
-	err = tmpH.ExecuteWriterUnbuffered(pongo2.Context(alerts), writer)
+	err = tmpH[template].ExecuteWriterUnbuffered(pongo2.Context(alerts), writer)
 	log.Println(alerts)
 
 	if err != nil {
 		log.Fatalf("Problem with template execution: %v", err)
 		panic(err)
-	}
+	} 
 
 	return bytesBuff.String()
 }
@@ -212,6 +225,7 @@ func AlertFormatTemplate(alerts map[string]interface{}) string {
 func POST_Handling(c *gin.Context) {
 	var msgtext string
 
+	template := c.Query("template")
 
 	chatid, err := strconv.ParseInt(c.Param("chatid"), 10, 64)
 
@@ -242,7 +256,7 @@ func POST_Handling(c *gin.Context) {
 		log.Println("+-----------------------------------------------------------+\n\n")
 	}
 	// Decide how format Text
-	msgtext = AlertFormatTemplate(s)
+	msgtext = AlertFormatTemplate(s, template)
 	
 	for _, subString := range SplitString(msgtext, cfg.SplitMessageBytes) {
 		msg := tgbotapi.NewMessage(chatid, subString)
