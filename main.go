@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"path"
+	"os"
 	"strconv"
 	"github.com/flosch/pongo2"
 	"github.com/gin-gonic/gin"
@@ -77,7 +79,15 @@ func telegramBot(bot *tgbotapi.BotAPI) {
 
 func loadTemplate(tmplPath string) (*pongo2.Template, error) {
 	// let's read template
-	return pongo2.FromFile(tmplPath)
+	if path.IsAbs(tmplPath) {
+		return pongo2.FromFile(tmplPath)
+	} else {
+		ex, err := os.Executable()
+		if err != nil {
+			panic(err)
+		}
+		return pongo2.FromFile(path.Join(path.Dir(ex), tmplPath))
+	}
 }
 
 func SplitString(s string, n int) []string {
@@ -215,8 +225,7 @@ func AlertFormatTemplate(alerts map[string]interface{}, template string) string 
 	log.Println(alerts)
 
 	if err != nil {
-		log.Fatalf("Problem with template execution: %v", err)
-		panic(err)
+		log.Printf("Problem with template execution: %v", err)
 	} 
 
 	return bytesBuff.String()
